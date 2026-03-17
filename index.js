@@ -202,39 +202,27 @@ async function main() {
             // 스크롤하면서 모든 리스트 로드 (무한 스크롤)
             console.log('무한 스크롤로 모든 리스트 로딩 중...');
             let previousHeight = 0;
-            let currentHeight = await page.evaluate(() => document.body.scrollHeight);
             let scrollAttempts = 0;
-            const maxScrollAttempts = 20; // 최대 20번 스크롤 시도
+            const maxScrollAttempts = 20;
 
             while (scrollAttempts < maxScrollAttempts) {
-                // 천천히 스크롤
-                await page.evaluate(() => {
-                    window.scrollBy(0, 500);
+                const currentHeight = await page.evaluate(() => {
+                    window.scrollTo(0, document.body.scrollHeight);
+                    return document.body.scrollHeight;
                 });
 
-                // 로딩 대기 (천천히)
-                await randomDelay(1500, 2500);
+                await randomDelay(2000, 3000);
 
-                // 높이 변화 확인
-                previousHeight = currentHeight;
-                currentHeight = await page.evaluate(() => document.body.scrollHeight);
+                const newHeight = await page.evaluate(() => document.body.scrollHeight);
 
-                if (currentHeight === previousHeight) {
-                    // 한 번 더 시도 (더 이상 로드할 콘텐츠 확인)
-                    await page.evaluate(() => window.scrollBy(0, 500));
-                    await randomDelay(2000, 3000);
-                    const finalHeight = await page.evaluate(() => document.body.scrollHeight);
-
-                    if (finalHeight === currentHeight) {
-                        console.log('더 이상 로드할 리스트 없음 - 완료');
-                        break;
-                    } else {
-                        currentHeight = finalHeight;
-                    }
+                if (newHeight === previousHeight) {
+                    console.log('더 이상 로드할 리스트 없음 - 완료');
+                    break;
                 }
 
+                previousHeight = newHeight;
                 scrollAttempts++;
-                console.log(`스크롤 진행 중... (${scrollAttempts}/${maxScrollAttempts}) - 높이: ${currentHeight}px`);
+                console.log(`스크롤 진행 중... (${scrollAttempts}/${maxScrollAttempts}) - 높이: ${newHeight}px`);
             }
 
             // 맨 위로 스크롤백 (스크린샷 전)
@@ -246,45 +234,57 @@ async function main() {
             await page.screenshot({ path: screenshotPath, fullPage: true });
             console.log(`'${keyword}' 풀 스크린샷 저장 완료`);
 
-            // 결과 파싱
+            // 결과 파싱 (XPath 없이 텍스트 기반 탐색)
             const results = await page.evaluate((TARGET_CLINIC_NAME) => {
-                const scrapedData = [];
-                // 검색 결과 블록 div의 Xpath: /html/body/div[1]/div[2]/div/div/div[2]/div[1]/div/div[3]
-                const resultsBlockXPath = '/html/body/div[1]/div[2]/div/div/div[2]/div[1]/div/div[3]';
-                const resultsBlock = document.evaluate(resultsBlockXPath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-
-                if (!resultsBlock) {
-                    return scrapedData;
+                // 정확히 일치하는 텍스트 노드의 부모 요소 찾기
+                function findExactTextElements(text) {
+                    const found = [];
+                    const walk = (node) => {
+                        if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() === text) {
+                            found.push(node.parentElement);
+                        }
+                        for (const child of node.childNodes) walk(child);
+                    };
+                    walk(document.body);
+                    return found;
                 }
 
-                // 하위 div가 이벤트 리스트
-                const eventDivs = resultsBlock.querySelectorAll(':scope > div');
-
-                eventDivs.forEach((eventDiv, index) => {
-                    try {
-                        // 병원명 Xpath 상대 경로: ./div/div[2]/p[2]
-                        const hospitalNameNode = document.evaluate('./div/div[2]/p[2]', eventDiv, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-
-                        if (hospitalNameNode && hospitalNameNode.textContent.includes(TARGET_CLINIC_NAME)) {
-                            // 이벤트명 Xpath 상대 경로: ./div/div[1]/div
-                            const eventNameNode = document.evaluate('./div/div[1]/div', eventDiv, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-
-                            // 평점 Xpath 상대 경로: ./div/div[4]/h5
-                            const starRatingNode = document.evaluate('./div/div[4]/h5', eventDiv, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-
-                            // 리뷰개수 Xpath 상대 경로: ./div/div[4]/p
-                            const reviewCountNode = document.evaluate('./div/div[4]/p', eventDiv, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-
-                            scrapedData.push({
-                                rank: index + 1, // 순서가 순위
-                                eventName: eventNameNode ? eventNameNode.textContent.trim() : 'N/A',
-                                starRating: starRatingNode ? starRatingNode.textContent.trim() : 'N/A',
-                                reviewCount: reviewCountNode ? reviewCountNode.textContent.trim() : 'N/A',
-                            });
-                        }
-                    } catch (e) {
-                        console.log(`이벤트 ${index + 1} 파싱 중 오류:`, e.message);
+                // 형제가 충분히 많은 리스트 아이템 카드 찾기
+                function findCardInList(el, minSiblings = 4) {
+                    let node = el;
+                    while (node.parentElement && node.parentElement !== document.body) {
+                        if (node.parentElement.children.length >= minSiblings) return node;
+                        node = node.parentElement;
                     }
+                    return null;
+                }
+
+                const scrapedData = [];
+                const clinicEls = findExactTextElements(TARGET_CLINIC_NAME);
+
+                clinicEls.forEach(el => {
+                    const card = findCardInList(el);
+                    if (!card) return;
+
+                    const rank = Array.from(card.parentElement.children).indexOf(card) + 1;
+
+                    // 카드 전체 텍스트 라인 수집
+                    const lines = (card.innerText || card.textContent)
+                        .split('\n')
+                        .map(s => s.trim())
+                        .filter(Boolean);
+
+                    // 별점: "4.8" 형태
+                    const starRating = lines.find(l => /^\d+\.\d+$/.test(l)) || 'N/A';
+                    // 리뷰수: "123개" 또는 "(123)" 형태
+                    const reviewCount = lines.find(l => /\d+개$/.test(l) || /^\(\d+\)$/.test(l)) || 'N/A';
+                    // 이벤트명: 병원명 앞에 오는 가장 긴 텍스트
+                    const clinicIdx = lines.indexOf(TARGET_CLINIC_NAME);
+                    const eventName = (clinicIdx > 0 ? lines.slice(0, clinicIdx) : lines)
+                        .filter(l => l !== starRating && l !== reviewCount)
+                        .sort((a, b) => b.length - a.length)[0] || 'N/A';
+
+                    scrapedData.push({ rank, eventName, starRating, reviewCount });
                 });
 
                 return scrapedData;
