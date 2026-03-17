@@ -178,8 +178,7 @@ async function main() {
             // 더보기 버튼 클릭
             console.log(`'${keyword}' 더보기 버튼 확인 중...`);
             try {
-                // XPath: /html/body/div[1]/div[2]/div/div/div[2]/div[2]/div[1]/div[1]/button
-                const moreButtonXPath = '/html/body/div[1]/div[2]/div/div/div[2]/div[2]/div[1]/div[1]/button';
+                const moreButtonXPath = '/html/body/div[1]/div/div/div/div[2]/div[2]/div[1]/div[1]/button';
                 const hasMoreButton = await page.evaluate((xpath) => {
                     const button = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
                     if (button) {
