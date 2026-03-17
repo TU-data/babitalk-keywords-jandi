@@ -249,8 +249,8 @@ async function main() {
                     return found;
                 }
 
-                // 형제가 충분히 많은 리스트 아이템 카드 찾기
-                function findCardInList(el, minSiblings = 4) {
+                // 카드 내부 섹션(~4개 형제)을 건너뛰고 실제 이벤트 리스트 아이템 탐색
+                function findCardInList(el, minSiblings = 10) {
                     let node = el;
                     while (node.parentElement && node.parentElement !== document.body) {
                         if (node.parentElement.children.length >= minSiblings) return node;
@@ -261,28 +261,35 @@ async function main() {
 
                 const scrapedData = [];
                 const clinicEls = findExactTextElements(TARGET_CLINIC_NAME);
+                const seenCards = new Set();
 
                 clinicEls.forEach(el => {
                     const card = findCardInList(el);
-                    if (!card) return;
+                    if (!card || seenCards.has(card)) return;
+                    seenCards.add(card);
 
                     const rank = Array.from(card.parentElement.children).indexOf(card) + 1;
 
-                    // 카드 전체 텍스트 라인 수집
+                    // 별점: 카드 내 h5 직접 탐색
+                    const h5 = card.querySelector('h5');
+                    const starRating = h5 ? h5.textContent.trim() : 'N/A';
+
+                    // 리뷰수: h5 바로 다음 p 요소
+                    const reviewP = h5 ? h5.nextElementSibling : null;
+                    const reviewCount = (reviewP && reviewP.tagName === 'P') ? reviewP.textContent.trim() : 'N/A';
+
+                    // 이벤트명: 병원명/별점/리뷰수를 제외한 첫 번째 텍스트
                     const lines = (card.innerText || card.textContent)
                         .split('\n')
                         .map(s => s.trim())
                         .filter(Boolean);
 
-                    // 별점: "4.8" 형태
-                    const starRating = lines.find(l => /^\d+\.\d+$/.test(l)) || 'N/A';
-                    // 리뷰수: "123개" 또는 "(123)" 형태
-                    const reviewCount = lines.find(l => /\d+개$/.test(l) || /^\(\d+\)$/.test(l)) || 'N/A';
-                    // 이벤트명: 병원명 앞에 오는 가장 긴 텍스트
-                    const clinicIdx = lines.indexOf(TARGET_CLINIC_NAME);
-                    const eventName = (clinicIdx > 0 ? lines.slice(0, clinicIdx) : lines)
-                        .filter(l => l !== starRating && l !== reviewCount)
-                        .sort((a, b) => b.length - a.length)[0] || 'N/A';
+                    const eventName = lines.find(l =>
+                        l !== TARGET_CLINIC_NAME &&
+                        l !== starRating &&
+                        l !== reviewCount &&
+                        l.length >= 3
+                    ) || 'N/A';
 
                     scrapedData.push({ rank, eventName, starRating, reviewCount });
                 });
