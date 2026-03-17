@@ -200,29 +200,27 @@ async function main() {
             }
 
             // 스크롤하면서 모든 리스트 로드 (무한 스크롤)
+            // body.scrollHeight가 고정인 내부 컨테이너 구조이므로 mouse.wheel 사용
             console.log('무한 스크롤로 모든 리스트 로딩 중...');
-            let previousHeight = 0;
+            await page.mouse.move(960, 540);
+            let previousCardCount = 0;
             let scrollAttempts = 0;
             const maxScrollAttempts = 20;
 
             while (scrollAttempts < maxScrollAttempts) {
-                const currentHeight = await page.evaluate(() => {
-                    window.scrollTo(0, document.body.scrollHeight);
-                    return document.body.scrollHeight;
-                });
-
+                await page.mouse.wheel({ deltaY: 3000 });
                 await randomDelay(2000, 3000);
 
-                const newHeight = await page.evaluate(() => document.body.scrollHeight);
+                const newCardCount = await page.evaluate(() => document.querySelectorAll('h5').length);
 
-                if (newHeight === previousHeight) {
+                if (newCardCount === previousCardCount) {
                     console.log('더 이상 로드할 리스트 없음 - 완료');
                     break;
                 }
 
-                previousHeight = newHeight;
+                previousCardCount = newCardCount;
                 scrollAttempts++;
-                console.log(`스크롤 진행 중... (${scrollAttempts}/${maxScrollAttempts}) - 높이: ${newHeight}px`);
+                console.log(`스크롤 진행 중... (${scrollAttempts}/${maxScrollAttempts}) - 카드: ${newCardCount}개`);
             }
 
             // 맨 위로 스크롤백 (스크린샷 전)
@@ -249,8 +247,9 @@ async function main() {
                     return found;
                 }
 
-                // 카드 내부 섹션(~4개 형제)을 건너뛰고 실제 이벤트 리스트 아이템 탐색
-                function findCardInList(el, minSiblings = 10) {
+                // 카드 내부 섹션(div[1..4], 4개 형제)을 건너뛰고 실제 이벤트 카드 탐색
+                // minSiblings=5: 내부 4개 섹션을 지나 실제 리스트 컨테이너까지 올라감
+                function findCardInList(el, minSiblings = 5) {
                     let node = el;
                     while (node.parentElement && node.parentElement !== document.body) {
                         if (node.parentElement.children.length >= minSiblings) return node;
@@ -266,13 +265,17 @@ async function main() {
                 clinicEls.forEach(el => {
                     const card = findCardInList(el);
                     if (!card || seenCards.has(card)) return;
+
+                    // h5(별점) 없으면 이벤트 카드가 아님 (클리닉 프로필 섹션 등 제외)
+                    const h5 = card.querySelector('h5');
+                    if (!h5) return;
+
                     seenCards.add(card);
 
                     const rank = Array.from(card.parentElement.children).indexOf(card) + 1;
 
-                    // 별점: 카드 내 h5 직접 탐색
-                    const h5 = card.querySelector('h5');
-                    const starRating = h5 ? h5.textContent.trim() : 'N/A';
+                    // 별점: 위에서 찾은 h5 재사용
+                    const starRating = h5.textContent.trim();
 
                     // 리뷰수: h5 바로 다음 p 요소
                     const reviewP = h5 ? h5.nextElementSibling : null;
