@@ -232,69 +232,37 @@ async function main() {
             await page.screenshot({ path: screenshotPath, fullPage: true });
             console.log(`'${keyword}' 풀 스크린샷 저장 완료`);
 
-            // 결과 파싱 (XPath 없이 텍스트 기반 탐색)
+            // 결과 파싱
             const results = await page.evaluate((TARGET_CLINIC_NAME) => {
-                // 정확히 일치하는 텍스트 노드의 부모 요소 찾기
-                function findExactTextElements(text) {
-                    const found = [];
-                    const walk = (node) => {
-                        if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() === text) {
-                            found.push(node.parentElement);
-                        }
-                        for (const child of node.childNodes) walk(child);
-                    };
-                    walk(document.body);
-                    return found;
-                }
-
-                // 카드 내부 섹션(div[1..4], 4개 형제)을 건너뛰고 실제 이벤트 카드 탐색
-                // minSiblings=5: 내부 4개 섹션을 지나 실제 리스트 컨테이너까지 올라감
-                function findCardInList(el, minSiblings = 5) {
-                    let node = el;
-                    while (node.parentElement && node.parentElement !== document.body) {
-                        if (node.parentElement.children.length >= minSiblings) return node;
-                        node = node.parentElement;
-                    }
-                    return null;
-                }
-
                 const scrapedData = [];
-                const clinicEls = findExactTextElements(TARGET_CLINIC_NAME);
-                const seenCards = new Set();
+                const resultsBlockXPath = '/html/body/div[1]/div/div/div/div[2]/div[1]/div/div[3]';
+                const resultsBlock = document.evaluate(resultsBlockXPath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
 
-                clinicEls.forEach(el => {
-                    const card = findCardInList(el);
-                    if (!card || seenCards.has(card)) return;
+                if (!resultsBlock) {
+                    return scrapedData;
+                }
 
-                    // h5(별점) 없으면 이벤트 카드가 아님 (클리닉 프로필 섹션 등 제외)
-                    const h5 = card.querySelector('h5');
-                    if (!h5) return;
+                const eventDivs = resultsBlock.querySelectorAll(':scope > div');
 
-                    seenCards.add(card);
+                eventDivs.forEach((eventDiv, index) => {
+                    try {
+                        const hospitalNameNode = document.evaluate('./div/div[2]/p[2]', eventDiv, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
 
-                    const rank = Array.from(card.parentElement.children).indexOf(card) + 1;
+                        if (hospitalNameNode && hospitalNameNode.textContent.includes(TARGET_CLINIC_NAME)) {
+                            const eventNameNode = document.evaluate('./div/div[1]/div/h3', eventDiv, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                            const starRatingNode = document.evaluate('./div/div[4]/h5', eventDiv, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                            const reviewCountNode = document.evaluate('./div/div[4]/p', eventDiv, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
 
-                    // 별점: 위에서 찾은 h5 재사용
-                    const starRating = h5.textContent.trim();
-
-                    // 리뷰수: h5 바로 다음 p 요소
-                    const reviewP = h5 ? h5.nextElementSibling : null;
-                    const reviewCount = (reviewP && reviewP.tagName === 'P') ? reviewP.textContent.trim() : 'N/A';
-
-                    // 이벤트명: 병원명/별점/리뷰수를 제외한 첫 번째 텍스트
-                    const lines = (card.innerText || card.textContent)
-                        .split('\n')
-                        .map(s => s.trim())
-                        .filter(Boolean);
-
-                    const eventName = lines.find(l =>
-                        l !== TARGET_CLINIC_NAME &&
-                        l !== starRating &&
-                        l !== reviewCount &&
-                        l.length >= 3
-                    ) || 'N/A';
-
-                    scrapedData.push({ rank, eventName, starRating, reviewCount });
+                            scrapedData.push({
+                                rank: index + 1,
+                                eventName: eventNameNode ? eventNameNode.textContent.trim() : 'N/A',
+                                starRating: starRatingNode ? starRatingNode.textContent.trim() : 'N/A',
+                                reviewCount: reviewCountNode ? reviewCountNode.textContent.trim() : 'N/A',
+                            });
+                        }
+                    } catch (e) {
+                        console.log(`이벤트 ${index + 1} 파싱 중 오류:`, e.message);
+                    }
                 });
 
                 return scrapedData;
